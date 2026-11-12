@@ -1,16 +1,37 @@
-# Hollow Lines (working title)
+# Short drama
 
-Hollow Lines is a faceless YouTube horror storytelling channel for a global audience, told in a dark hand-drawn stickman style: white chalk-like figures on black ink paper with a single blood-red accent, introduced each episode by a recurring lantern-carrying host called The Storyteller. About three-quarters of the stories are original, set in one shared fictional world, so recurring places, characters and hidden clues reward returning viewers who theorize across episodes. The rest retell folklore from around the world, which brings in search traffic. Each story is built for suspense rather than gore: a hook in the first ten seconds, everyday settings, rising dread, and endings that land as terror, a twist, justice or heartbreak. Every video is clearly presented as fiction or folklore and marked "not made for kids". The channel posts three long episodes a week (8+ minutes) and 60-second horror Shorts on the remaining days, in English. Production is fully automated in two pipelines. The [story factory](STORY_FACTORY.md) is a writers' room of AI models from several companies (today open-weight models on Amazon Bedrock: Kimi, GLM, DeepSeek, Qwen and MiniMax) that pitch, plan, write, edit and audience-test every story, running in GitHub Actions. The [production pipeline](PRODUCTION.md) voices the narration with an open-source voice model, draws the chalk stickman scenes in code and assembles each video with FFmpeg, also in GitHub Actions.
-
-## The four pipelines
+Vertical AI short-drama series (60–120-second episodes with a hook, a reversal and a
+cliffhanger), moved out of the Hollow Lines channel repository so the two can grow apart.
 
 | # | Pipeline | What it makes | Code | Docs |
 |---|---|---|---|---|
-| 1 | Story factory | stickman horror stories for Hollow Lines | `story_factory/` | [STORY_FACTORY.md](STORY_FACTORY.md) |
-| 2 | Video production | stickman videos from those stories | `production/` | [PRODUCTION.md](PRODUCTION.md) |
-| 3 | Drama writers' room | vertical short-drama series and dialogue episodes | `drama_factory/` | [DRAMA_FACTORY.md](DRAMA_FACTORY.md) |
+| 3 | Drama writers' room | series bibles and dialogue episodes | `drama_factory/` | [DRAMA_FACTORY.md](DRAMA_FACTORY.md) |
 | 4 | Drama production | TV-style vertical episodes from those scripts | `drama_production/` | [DRAMA_PRODUCTION.md](DRAMA_PRODUCTION.md) |
 
-All four run in the same GitHub Actions workflow (one mode each) and share the model
-access, the database and the cost log; each has its own stages and settings.
+`story_factory/` is the shared engine both use: model access (Amazon Bedrock and direct
+APIs), judging, the database and the cost log. It is a copy of the one in the channel
+repository ([STORY_FACTORY.md](STORY_FACTORY.md)); the two copies may now diverge.
 
+Everything runs from the **Short drama** workflow in the Actions tab; the modes are listed at
+the top of `.github/workflows/short-drama.yml`.
+
+## Where things stand
+
+- **fal.ai path** (`drama-video`): about $2.60 per finished minute (Seedream v4 pictures,
+  Seedance 1.0 lite clips).
+- **Open-model path** (`drama-vast`, a rented Vast.ai GPU with no download charges): the ready
+  script `drama_production/scripts/the-last-call.json` ("The Last Call", 18 shots, 57 s) has
+  been made with Chatterbox voices, Qwen-Image-Edit-2511 pictures, Wan 2.2 I2V motion on every
+  shot and MMAudio room tone (about $6 of GPU time). Lip sync (Wan2.2-S2V) works but takes about
+  23 minutes a shot on an RTX PRO 6000; one of the nine speaking shots is lip-synced so far.
+  Finishing the other eight is about 3.2 GPU hours (~$5.70), reusing everything else with
+  `reuse_run`.
+
+## Secrets
+
+GitHub Actions secrets (Settings → Secrets and variables → Actions): `AWS_BEARER_TOKEN_BEDROCK`
+(writing), `FAL_KEY` and optionally `BOSON_API_KEY` (fal.ai video), `VAST_API_KEY` (open
+models on Vast.ai).
+
+Episodes written in the channel repository's database did not move with the code; the ready
+script needs no database.

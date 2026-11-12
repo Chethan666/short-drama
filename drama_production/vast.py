@@ -100,7 +100,7 @@ def _num(value: Any, default: float = 0.0) -> float:
 
 
 class Vast:
-    def __init__(self, key: str | None = None, run=subprocess.run, label: str = "hollow-lines"):
+    def __init__(self, key: str | None = None, run=subprocess.run, label: str = "short-drama"):
         self.key = key or os.environ.get("VAST_API_KEY", "")
         if not self.key:
             raise VastError("Set VAST_API_KEY (a Vast.ai API key) as a GitHub Actions secret")

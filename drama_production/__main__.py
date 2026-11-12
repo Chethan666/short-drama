@@ -41,6 +41,8 @@ def main(argv: list[str] | None = None) -> int:
     v.add_argument("--out", default="out")
     v.add_argument("--max-usd", type=float, dest="max_usd")
     v.add_argument("--reuse", help="a folder of pictures an earlier run made (ref_*.png, shot_*.png) to skip redrawing")
+    sub.add_parser("vast-check", help="the Vast.ai balance and the best GPU offers, with their traffic charges (no spend)")
+    sub.add_parser("vast-cleanup", help="destroy any Vast.ai machine this run rented")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(asctime)s %(levelname)s %(message)s")
@@ -83,6 +85,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "vast":
         return vast(args, cfg)
+    if args.command in ("vast-check", "vast-cleanup"):
+        return vast_admin(args.command)
 
     from .produce import Producer  # the video libraries are only needed here
 
@@ -115,10 +119,62 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _label() -> str:
+    return f"short-drama-{os.environ.get('GITHUB_RUN_ID', 'local')}"
+
+
+def vast_admin(command: str) -> int:
+    from .vast import QUERIES, Vast, download_usd, expected_cost, upload_usd
+
+    vast = Vast(label=_label())
+    if command == "vast-cleanup":
+        print(f"Destroyed {vast.cleanup_label()} leftover machine(s) labelled {vast.label}")
+        return 0
+    print("Balance:", vast.balance())
+    try:
+        user = vast.cli("show", "user")
+        print("Account:", {k: user.get(k) for k in ("credit", "balance", "balance_threshold", "has_billing",
+                                                    "billing_creditonly", "can_pay") if isinstance(user, dict)})
+        mine = vast.cli("show", "instances") or []
+        print(f"Your machines ({len(mine)}):")
+        for inst in mine:
+            print(f"  id {inst.get('id')} {inst.get('gpu_name')} status {inst.get('actual_status')} "
+                  f"label {inst.get('label')} ${float(inst.get('dph_total') or 0):.2f}/h")
+    except Exception as exc:  # noqa: BLE001 - a report
+        print("Account details unavailable:", exc)
+    offers = vast.offers()
+    print(f"{len(offers)} suitable offers; the cheapest:")
+    for o in offers[:8]:
+        print(f"  id {o.get('id')}  {o.get('gpu_name')}  ${float(o.get('dph_total') or 0):.2f}/h  "
+              f"gpu_ram {o.get('gpu_ram')}  cpu_ram {o.get('cpu_ram')}  disk {o.get('disk_space')}  "
+              f"down {o.get('inet_down')}  reliability {o.get('reliability2', o.get('reliability'))}  "
+              f"cuda {o.get('cuda_max_good')}  traffic ~${download_usd(o) + upload_usd(o):.2f}  "
+              f"typical run ~${expected_cost(o):.2f}")
+    if offers:
+        print("Offer fields:", ", ".join(sorted(offers[0])))
+    # Why offers were left out: the cheapest 80 GB machines before the traffic rule, with their charges.
+    for label, query in (("our filters", QUERIES[-1]),
+                         ("any verified 80 GB", "num_gpus=1 gpu_ram>=79 verified=true rentable=true")):
+        try:
+            raw = vast.cli("search", "offers", query, "-o", "dph_total")
+        except Exception as exc:  # noqa: BLE001 - a report
+            print(f"{label}: search failed: {exc}")
+            continue
+        raw = raw if isinstance(raw, list) else []
+        free = [o for o in raw if download_usd(o) == 0 and upload_usd(o) == 0]
+        print(f"{label}: {len(raw)} offers, {len(free)} with no traffic charges; the cheapest:")
+        for o in raw[:12]:
+            print(f"  id {o.get('id')}  {o.get('gpu_name')}  ${float(o.get('dph_total') or 0):.2f}/h  "
+                  f"disk {o.get('disk_space')}  down {o.get('inet_down')}  arch {o.get('cpu_arch')}  "
+                  f"down $/TB {o.get('internet_down_cost_per_tb')} (per GB {o.get('inet_down_cost')})  "
+                  f"up $/TB {o.get('internet_up_cost_per_tb')} (per GB {o.get('inet_up_cost')})  "
+                  f"-> traffic for this job ~${download_usd(o) + upload_usd(o):.2f}")
+    return 0
+
+
 def vast(args: argparse.Namespace, cfg: dict) -> int:
     """Open models on a rented GPU: Chatterbox, Qwen-Image-Edit-2511, Wan2.2-S2V, Wan 2.2 I2V, MMAudio."""
-    from production.__main__ import _label
-    from production.vast import Vast
+    from .vast import Vast
 
     from . import vastdrama
     from .voices import KokoroVoice

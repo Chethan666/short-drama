@@ -1,0 +1,177 @@
+# Runs the short-drama pipelines on GitHub's servers with keys from encrypted repository secrets.
+# Start it from the Actions tab ("Run workflow").
+#   mode=check: tests + which models your keys can use (no paid generation)
+#   mode=drama-series: pipeline 3 pitches and plans a new short-drama series
+#   mode=drama-write: pipeline 3 writes the next episodes (story_id = how many, default 3)
+#   mode=drama-check: pipeline 4 lists what each configured fal.ai model expects, and the Boson voices (no spend)
+#   mode=drama-video: pipeline 4 makes the next approved episode's vertical video on fal.ai (story_id = an episode id)
+#   mode=drama-vast: pipeline 4 on open models on a rented Vast.ai GPU (no download charges): the ready
+#               60-second script in drama_production/scripts (or story_id = an episode id); reuse_run = an
+#               earlier drama-vast run id whose pictures, lines and clips to reuse
+#   mode=vast-check: the Vast.ai balance and the best GPU offers with their traffic charges (no spend)
+# Videos are saved as the drama-<run number> artifact for 14 days. The database carries over
+# between runs (saved as an artifact, restored at the start of the next run).
+name: Short drama
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "What to run (see the comment at the top of this file)"
+        type: choice
+        options: [check, drama-series, drama-write, drama-check, drama-video, drama-vast, vast-check]
+        default: check
+      config:
+        description: Model setup
+        type: choice
+        options: [config.aws-open.toml, config.aws-top.toml, config.aws-only.toml, config.example.toml]
+        default: config.aws-open.toml
+      story_id:
+        description: "drama-video / drama-vast: an episode id; drama-write: how many episodes (default 3)"
+        type: string
+        default: ""
+      reuse_run:
+        description: "drama-vast: the run id of an earlier drama-vast run whose media to reuse"
+        type: string
+        default: ""
+      overrides:
+        description: "Optional config overrides, space-separated KEY=VALUE (e.g. drama_vast.max_usd=6)"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  actions: read  # to find the database saved by the previous run
+
+concurrency:
+  group: short-drama
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      AWS_BEARER_TOKEN_BEDROCK: ${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      FAL_KEY: ${{ secrets.FAL_KEY }}
+      BOSON_API_KEY: ${{ secrets.BOSON_API_KEY }}
+      VAST_API_KEY: ${{ secrets.VAST_API_KEY }}
+      MODE: ${{ inputs.mode }}
+      CONFIG: ${{ inputs.config }}
+      OVERRIDES: ${{ inputs.overrides }}
+      STORY_ID: ${{ inputs.story_id }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: pip install -r requirements.txt
+
+      - name: Unit tests
+        run: python -m unittest discover -s tests -t .
+
+      - name: Model access
+        if: env.MODE == 'check' || env.MODE == 'drama-series' || env.MODE == 'drama-write'
+        run: python -m story_factory --config "$CONFIG" models --list --why || true
+
+      - name: Restore the database from the last run
+        if: startsWith(env.MODE, 'drama-')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: .github/scripts/restore-story-db.sh
+
+      - name: Cache the voice model
+        if: env.MODE == 'drama-video' || env.MODE == 'drama-vast'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: kokoro-82m-v1
+
+      - name: Install video tools
+        if: env.MODE == 'drama-video' || env.MODE == 'drama-vast'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg espeak-ng fonts-dejavu-core
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements-video.txt
+
+      - name: Vast.ai tools
+        if: env.MODE == 'drama-vast' || env.MODE == 'vast-check'
+        run: pip install vastai
+
+      - name: Vast.ai balance and offers
+        if: env.MODE == 'vast-check'
+        run: python -m drama_production --config "$CONFIG" vast-check | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Writing and fal.ai video
+        if: env.MODE == 'drama-series' || env.MODE == 'drama-write' || env.MODE == 'drama-check' || env.MODE == 'drama-video'
+        run: |
+          SETS=()
+          for kv in $OVERRIDES; do SETS+=(--set "$kv"); done
+          P3=(python -m drama_factory --config "$CONFIG" "${SETS[@]}")     # pipeline 3: writing
+          P4=(python -m drama_production --config "$CONFIG" "${SETS[@]}")  # pipeline 4: video
+          case "$MODE" in
+            drama-check)  "${P4[@]}" check ;;
+            drama-series) "${P3[@]}" series ;;
+            drama-write)  "${P3[@]}" write --count "${STORY_ID:-3}" ;;
+            drama-video)  if [ -n "$STORY_ID" ]; then "${P4[@]}" produce --episode "$STORY_ID"; else "${P4[@]}" produce; fi ;;
+          esac 2>&1 | tee drama-output.txt
+          status=${PIPESTATUS[0]}
+          { echo "## $MODE"; echo '```'; tail -c 60000 drama-output.txt; echo '```'; echo '```'; "${P3[@]}" status; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          exit $status
+
+      - name: Make the drama episode on Vast.ai
+        if: env.MODE == 'drama-vast'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          REUSE_RUN: ${{ inputs.reuse_run }}
+        run: |
+          ARGS=()
+          if [ -n "$STORY_ID" ]; then ARGS+=(--episode "$STORY_ID"); fi
+          if [ -n "$REUSE_RUN" ]; then
+            artifact=$(gh api "repos/$REPO/actions/runs/$REUSE_RUN/artifacts" --jq \
+              '[.artifacts[] | select(.name | startswith("drama-"))] | first | .id // empty')
+            if [ -n "$artifact" ]; then
+              gh api "repos/$REPO/actions/artifacts/$artifact/zip" > "$RUNNER_TEMP/reuse.zip"
+              mkdir -p reuse && unzip -o -q "$RUNNER_TEMP/reuse.zip" -d reuse
+              echo "Reusing media from run $REUSE_RUN: $(find reuse -type f | wc -l) files"
+              ARGS+=(--reuse reuse)
+            fi
+          fi
+          SETS=()
+          for kv in $OVERRIDES; do SETS+=(--set "$kv"); done
+          python -m drama_production --config "$CONFIG" "${SETS[@]}" vast "${ARGS[@]}" 2>&1 | tee drama-output.txt
+          status=${PIPESTATUS[0]}
+          { echo '## drama-vast'; echo '```'; tail -c 60000 drama-output.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          exit $status
+
+      - name: Give back any Vast.ai machine this run rented
+        if: always() && env.MODE == 'drama-vast'
+        run: python -m drama_production --config "$CONFIG" vast-cleanup || true
+
+      - name: Save the episode video
+        if: always() && (env.MODE == 'drama-video' || env.MODE == 'drama-vast')
+        uses: actions/upload-artifact@v6
+        with:
+          name: drama-${{ github.run_number }}
+          path: out/
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Save the database
+        if: always() && startsWith(env.MODE, 'drama-')
+        uses: actions/upload-artifact@v6
+        with:
+          name: story-db
+          path: data/
+          retention-days: 90
+          if-no-files-found: ignore

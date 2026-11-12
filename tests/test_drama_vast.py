@@ -85,7 +85,7 @@ class JobTests(unittest.TestCase):
 
 class TrafficTests(unittest.TestCase):
     def test_only_hosts_with_free_downloads_and_pennies_of_upload_are_offered(self):
-        from production.vast import Vast
+        from drama_production.vast import Vast
 
         offers = [
             {"id": 1, "dph_total": 1.0, "inet_down_cost": 0.04, "inet_up_cost": 0.0, "inet_down": 900},
@@ -105,7 +105,7 @@ class TrafficTests(unittest.TestCase):
         self.assertEqual(sorted(o["id"] for o in Fake().offers()), [3, 4, 5])
 
     def test_a_slow_line_costs_more_rented_time(self):
-        from production.vast import expected_cost
+        from drama_production.vast import expected_cost
 
         fast = {"dph_total": 1.3, "inet_down": 8000}
         slow = {"dph_total": 1.2, "inet_down": 500}
@@ -159,7 +159,7 @@ if __name__ == "__main__":
 
 class StartTests(unittest.TestCase):
     def test_a_start_command_that_holds_the_connection_still_counts_once_the_log_exists(self):
-        from production import vast as vastmod
+        from drama_production import vast as vastmod
 
         calls = []
 
@@ -178,7 +178,7 @@ class StartTests(unittest.TestCase):
         self.assertIn("test -e /workspace/job/run.log", calls[1])
 
     def test_no_log_means_the_job_never_started(self):
-        from production import vast as vastmod
+        from drama_production import vast as vastmod
 
         class Fake(vastmod.Vast):
             def __init__(self):

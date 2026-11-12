@@ -236,7 +236,7 @@ def _read(path: Path) -> np.ndarray:
 def produce(bible: dict[str, Any], episode: dict[str, Any], out_dir: Path, kokoro: Any, cfg: dict[str, Any],
             vast: Any, worker: Path, run_job=None, full_cfg: dict | None = None,
             reuse: Path | None = None) -> dict[str, Any]:
-    from production import vast as vastmod
+    from . import vast as vastmod
 
     started = time.time()
     run_job = run_job or vastmod.run_job

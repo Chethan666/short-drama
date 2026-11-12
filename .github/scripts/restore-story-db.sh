@@ -9,7 +9,7 @@
 # Needs GH_TOKEN, REPO and GITHUB_RUN_ID.
 set -euo pipefail
 
-runs=$(gh api "repos/$REPO/actions/workflows/story-factory.yml/runs?per_page=12" --jq \
+runs=$(gh api "repos/$REPO/actions/workflows/short-drama.yml/runs?per_page=12" --jq \
   "[.workflow_runs[] | select(.id != $GITHUB_RUN_ID)] | .[].id")
 
 best_id="" best_at="" best_run=""
